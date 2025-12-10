@@ -4,12 +4,49 @@ from app.etl.data.remote.gee.data_processor import DataProcessor
 
 
 class GoogleEarthAPIDataCollector:
-    def __init__(self, projectname):
+    def __init__(self, projectname: str = None):
         ee.Authenticate()
-        ee.Initialize(project=projectname)
+        # Initialize Earth Engine; project is optional now.
+        if projectname:
+            ee.Initialize(project=projectname)
+        else:
+            ee.Initialize()
 
-    def collect(self, start_date, end_date, longitude, latitude, scale):
-        dataset = "ECMWF/ERA5_LAND/DAILY_AGGR"
+    def _resolve_dataset(self, satellite: str) -> str:
+        """Resolve a satellite identifier or dataset alias to an Earth Engine dataset id.
+
+        - If `satellite` contains a '/', assume it's already a full dataset id and return it.
+        - Otherwise, map common short aliases (case-insensitive) to dataset ids.
+        - Fall back to ERA5 land daily aggregate if unknown.
+        """
+        if not satellite:
+            return "ECMWF/ERA5_LAND/DAILY_AGGR"
+
+        sat = satellite.strip()
+        if "/" in sat:
+            return sat
+
+        mapping = {
+            "ERA5": "ECMWF/ERA5_LAND/DAILY_AGGR",
+            "ERA5_LAND": "ECMWF/ERA5_LAND/DAILY_AGGR",
+            "S2": "COPERNICUS/S2_SR",
+            "SENTINEL2": "COPERNICUS/S2_SR",
+            "S1": "COPERNICUS/S1_GRD",
+            "LANDSAT8": "LANDSAT/LC08/C01/T1_SR",
+        }
+
+        key = sat.upper()
+        return mapping.get(key, "ECMWF/ERA5_LAND/DAILY_AGGR")
+
+    def collect(self, satellite, start_date, end_date, longitude, latitude, scale):
+        dataset = self._resolve_dataset(satellite)
+        # Branch behavior depending on dataset type
+        if "COPERNICUS/S2" in dataset or "SENTINEL-2" in satellite.upper():
+            # Sentinel-2 is an optical imagery collection with spectral bands
+            df = self.__load_sentinel2(dataset, start_date, end_date, longitude, latitude, scale)
+            return df
+
+        # Default: assume atmospheric/weather dataset (e.g., ERA5)
         df = self.__load_data_from_dataset(
             dataset, start_date, end_date, longitude, latitude, scale
         )
@@ -68,7 +105,7 @@ class GoogleEarthAPIDataCollector:
         return weather_df
 
     def __load_data_from_dataset(
-        self, dataset, start_date, end_date, latitude, longitude, scale
+        self, dataset, start_date, end_date, longitude, latitude, scale
     ):
         point = ee.Geometry.Point([longitude, latitude])
 
@@ -88,5 +125,56 @@ class GoogleEarthAPIDataCollector:
         )
         data = dataset.getRegion(point, scale).getInfo()
         df = pd.DataFrame(data[1:], columns=data[0])
+
+        return df
+
+    def __load_sentinel2(self, dataset, start_date, end_date, longitude, latitude, scale):
+        """Load Sentinel-2 bands for a point and return a simple dataframe.
+
+        Returns columns: time (ms), and the selected bands. Additionally adds a 'date' column.
+        """
+        point = ee.Geometry.Point([longitude, latitude])
+
+        collection = ee.ImageCollection(dataset).filterDate(start_date, end_date)
+
+        bands = [
+            "B1",
+            "B2",
+            "B3",
+            "B4",
+            "B5",
+            "B6",
+            "B7",
+            "B8",
+            "B8A",
+            "B9",
+            "B11",
+            "B12",
+            "AOT",
+            "WVP",
+            "SCL",
+            "TCI_R",
+            "TCI_G",
+            "TCI_B",
+        ]
+
+        # Compute NDVI for each image and add it as a band, then select bands + NDVI
+        def add_ndvi(image):
+            ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
+            return image.addBands(ndvi)
+
+        collection = collection.map(add_ndvi)
+        collection = collection.select(bands + ['NDVI'])
+
+        data = collection.getRegion(point, scale).getInfo()
+        df = pd.DataFrame(data[1:], columns=data[0])
+
+        # Add a datetime column for convenience
+        if "time" in df.columns:
+            df["date"] = df["time"].apply(lambda x: pd.to_datetime(x / 1000, unit="s"))
+
+        # Ensure NDVI column exists and is numeric (could be None for some entries)
+        if 'NDVI' in df.columns:
+            df['NDVI'] = pd.to_numeric(df['NDVI'], errors='coerce')
 
         return df
