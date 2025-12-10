@@ -26,6 +26,7 @@ reserved = [
     "UPDATE",
     "SET",
     "DELETE",
+    "AS",
 ]
 tokens = [
     "FLOATNUMBER",
@@ -128,6 +129,11 @@ def t_FROM(t):
 
 @TOKEN(r"into")
 def t_INTO(t):
+    return t
+
+
+@TOKEN(r"as")
+def t_AS(t):
     return t
 
 

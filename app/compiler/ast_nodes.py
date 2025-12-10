@@ -38,3 +38,9 @@ class OrderByParameter:
 @dataclass
 class OrderByNode:
     parameters: list[OrderByParameter]
+
+
+@dataclass
+class AliasNode:
+    expr: ColumnNameNode | ColumnIndexNode | AggregationNode | str | tuple
+    alias: str

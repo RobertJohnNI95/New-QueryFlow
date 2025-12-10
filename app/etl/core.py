@@ -36,6 +36,7 @@ def transform_select(data: pd.DataFrame, criteria: dict) -> pd.DataFrame:
         are_select_columns_aggregation = all(
             type(item) == tuple for item in criteria["COLUMNS"]
         )
+    alias_map: dict[str, str] = {}
     # filtering
     if criteria["FILTER"]:
         data = apply_filtering(data, criteria["FILTER"])
@@ -73,16 +74,26 @@ def transform_select(data: pd.DataFrame, criteria: dict) -> pd.DataFrame:
 
             if are_select_columns_aggregation:
                 # list of tuples each tuple is (aggregation,colum name)
-                aggregate_columns: list[Tuple[str | Any]] = [
-                    (
-                        (tuple[0], data.columns[int(tuple[1][1:-1])])
-                        if is_column_number(tuple[1])
-                        else tuple
-                    )
-                    for tuple in columns
-                ]
+                aggregate_columns: list[Tuple[str | Any]] = []
+                for tuple_item in columns:
+                    # support (agg, col) and (agg, col, alias)
+                    if len(tuple_item) == 2:
+                        agg, col = tuple_item
+                        alias = None
+                    else:
+                        agg, col, alias = tuple_item
+                    if is_column_number(col):
+                        col_name = data.columns[int(col[1:-1])]
+                    else:
+                        col_name = col
+                    aggregate_columns.append((agg, col_name))
+                    if alias:
+                        new_col = f"{agg}_{col_name}"
+                        alias_map[new_col] = alias
 
                 data = generate_aggregation_row(data, aggregate_columns)
+                if alias_map:
+                    data = data.rename(columns=alias_map)
 
             else:
                 if any(type(column) == tuple for column in columns):
@@ -90,17 +101,29 @@ def transform_select(data: pd.DataFrame, criteria: dict) -> pd.DataFrame:
                         "there are aggregation columns in select you should use group by"
                     )
                 # assuming that select columns don't contain any aggregate
-                column_names = [
-                    (
-                        data.columns[int(column[1:-1])]
-                        if is_column_number(column)
-                        else column
-                    )
-                    for column in columns
-                ]
+                column_names = []
+                for column in columns:
+                    # alias node
+                    if isinstance(column, AliasNode):
+                        inner = column.expr
+                        if is_column_number(inner):
+                            col_name = data.columns[int(inner[1:-1])]
+                        else:
+                            col_name = inner
+                        column_names.append(col_name)
+                        alias_map[col_name] = column.alias
+                    else:
+                        col_name = (
+                            data.columns[int(column[1:-1])]
+                            if is_column_number(column)
+                            else column
+                        )
+                        column_names.append(col_name)
 
                 # Select columns
                 data = data[column_names]
+                if alias_map:
+                    data = data.rename(columns=alias_map)
 
     # distinct
     if criteria["DISTINCT"]:

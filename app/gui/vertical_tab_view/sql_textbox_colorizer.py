@@ -57,6 +57,7 @@ class Colorizer:
         "SET",
         "DELETE",
         "GROUP",
+        "AS",
     ]
     AGGREGATION_FUNCTIONS = [
         "SUM",

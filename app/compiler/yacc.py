@@ -5,6 +5,7 @@ from app.compiler.ast_nodes import (
     OrderByNode,
     OrderByParameter,
     SortingWay,
+    AliasNode,
 )
 from app.core.errors import ParserError
 
@@ -45,13 +46,32 @@ def p_error(p):
 
 
 def p_select(p):
-    """select : SELECT distinct select_columns into_statement FROM DATASOURCE where group order limit_or_tail SIMICOLON"""
-    if type(p[3]) == str:
-        p[3] = "'" + p[3] + "'"
+    """select : SELECT distinct select_columns into_statement from_statement where group order limit_or_tail SIMICOLON"""
+    # unpack parts for clarity
+    distinct = p[2]
+    select_columns = p[3]
+    into_stmt = p[4]
+    from_stmt = p[5]
+    where_clause = p[6]
+    group_clause = p[7]
+    order_clause = p[8]
+    limit_tail = p[9]
 
-    file_type, file_path = p[6].split(":", 1)
-    if p[4]:
-        load_type, load_path = p[4].split(":", 1)
+    if type(select_columns) == str:
+        select_columns = "'" + select_columns + "'"
+
+    # from_stmt can be a DATASOURCE string or a tuple (DATASOURCE, alias)
+    if isinstance(from_stmt, tuple):
+        datasource = from_stmt[0]
+        datasource_alias = from_stmt[1]
+    else:
+        datasource = from_stmt
+        datasource_alias = None
+
+    file_type, file_path = datasource.split(":", 1)
+    if into_stmt:
+        load_type, load_path = into_stmt.split(":", 1)
+
     p[0] = (
         "from app import etl\n"
         "from app.compiler.ast_nodes import *\n\n"
@@ -59,16 +79,15 @@ def p_select(p):
         f"transformed_data = etl.transform_select(\n"
         f"   extracted_data,\n"
         f"   {{\n"
-        f"        'COLUMNS':  {p[3]},\n"
-        f"        'DISTINCT': {p[2]},\n"
-        f"        'FILTER':   {p[7]},\n"
-        f"        'GROUP':    {p[8]},\n"
-        f"        'ORDER':    {p[9]},\n"
-        f"        'LIMIT_OR_TAIL':    {p[10]},\n"
+        f"        'COLUMNS':  {select_columns},\n"
+        f"        'DISTINCT': {distinct},\n"
+        f"        'FILTER':   {where_clause},\n"
+        f"        'GROUP':    {group_clause},\n"
+        f"        'ORDER':    {order_clause},\n"
+        f"        'LIMIT_OR_TAIL':    {limit_tail},\n"
         f"    }}\n"
         f")\n"
-        f""
-        f"{f"etl.load(transformed_data,'{load_type}','{load_path}')" if p[4] else "" }\n"
+        f"{f"etl.load(transformed_data,'{load_type}','{load_path}')" if into_stmt else "" }\n"
     )
 
 
@@ -217,9 +236,38 @@ def p_columns(p):
 
 
 def p_columns_base(p):
-    """columns : column
-    | aggregation_function"""
+    """columns : select_unit"""
     p[0] = [p[1]]
+
+
+def p_select_unit_col(p):
+    """select_unit : column"""
+    p[0] = p[1]
+
+
+def p_select_unit_agg(p):
+    """select_unit : AGGREGATION_FUNCTION LPAREN column RPAREN
+    | AGGREGATION_FUNCTION LPAREN TIMES RPAREN"""
+    p[0] = (p[1], p[3])
+    if p[3] == "*" and p[1] != "size":
+        raise ParserError(
+            f"Syntax error: You cannot use * with aggregation functions except SIZE(*)",
+            "*",
+            -1,
+            -1,
+        )
+
+
+def p_select_unit_col_alias(p):
+    """select_unit : column AS SIMPLE_COLNAME"""
+    p[0] = AliasNode(expr=p[1], alias=str(p[3]))
+
+
+def p_select_unit_agg_alias(p):
+    """select_unit : AGGREGATION_FUNCTION LPAREN column RPAREN AS SIMPLE_COLNAME
+    | AGGREGATION_FUNCTION LPAREN TIMES RPAREN AS SIMPLE_COLNAME"""
+    # produce a tuple (function, column, alias)
+    p[0] = (p[1], p[3], str(p[6]))
 
 
 def p_aggregation_function(p):
@@ -275,6 +323,26 @@ def p_group(p):
 def p_group_empty(p):
     """group : empty"""
     p[0] = None
+
+
+def p_from_statement(p):
+    """from_statement : FROM datasource_alias"""
+    p[0] = p[2]
+
+
+def p_datasource_alias_plain(p):
+    """datasource_alias : DATASOURCE"""
+    p[0] = p[1]
+
+
+def p_datasource_alias_as(p):
+    """datasource_alias : DATASOURCE AS SIMPLE_COLNAME"""
+    p[0] = (p[1], str(p[3]))
+
+
+def p_datasource_alias_plainname(p):
+    """datasource_alias : DATASOURCE SIMPLE_COLNAME"""
+    p[0] = (p[1], str(p[2]))
 
 
 ###########################

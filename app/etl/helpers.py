@@ -222,14 +222,47 @@ def convert_select_column_indices_to_name(
     result_columns = [None] * len(select_columns)
     for index in range(len(select_columns)):
         item = select_columns[index]
+        # Aggregation tuples can be (agg, column) or (agg, column, alias)
         if type(item) == tuple:
-            agg, column = item
+            if len(item) == 2:
+                agg, column = item
+                alias = None
+            else:
+                agg, column, alias = item
             if is_index(column):
                 column_name = column_index_to_name(df, column)
-                result_columns[index] = (agg, column_name)
             else:
                 column_name = column
+            if alias:
+                result_columns[index] = (agg, column_name, alias)
+            else:
                 result_columns[index] = (agg, column_name)
+        # AliasNode: preserve alias while converting inner column/index to name
+        elif isinstance(item, AliasNode):
+            inner = item.expr
+            if type(inner) == str:
+                if is_index(inner):
+                    column_name = column_index_to_name(df, inner)
+                else:
+                    column_name = inner
+            elif type(inner) == tuple:
+                # unlikely here, but handle agg inner
+                agg, col = inner
+                if is_index(col):
+                    column_name = column_index_to_name(df, col)
+                else:
+                    column_name = col
+                column_name = (agg, column_name)
+            else:
+                # ColumnNameNode/ColumnIndexNode etc.
+                try:
+                    column_name = inner.name
+                except Exception:
+                    try:
+                        column_name = df.columns[inner.index]
+                    except Exception:
+                        column_name = str(inner)
+            result_columns[index] = AliasNode(expr=column_name, alias=item.alias)
         else:
             column = item
             if is_index(column):
