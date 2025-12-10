@@ -29,8 +29,8 @@ class GoogleEarthAPIDataCollector:
         mapping = {
             "ERA5": "ECMWF/ERA5_LAND/DAILY_AGGR",
             "ERA5_LAND": "ECMWF/ERA5_LAND/DAILY_AGGR",
-            "S2": "COPERNICUS/S2_SR",
-            "SENTINEL2": "COPERNICUS/S2_SR",
+            "S2": "COPERNICUS/S2_SR_HARMONIZED",
+            "SENTINEL2": "COPERNICUS/S2_SR_HARMONIZED",
             "S1": "COPERNICUS/S1_GRD",
             "LANDSAT8": "LANDSAT/LC08/C01/T1_SR",
         }
@@ -158,13 +158,46 @@ class GoogleEarthAPIDataCollector:
             "TCI_B",
         ]
 
-        # Compute NDVI for each image and add it as a band, then select bands + NDVI
-        def add_ndvi(image):
-            ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-            return image.addBands(ndvi)
+        # Compute vegetation (NDVI, EVI, NDWI, and CGI) for each image
+        def add_vegetation(image):
+            # NDVI: (NIR - Red) / (NIR + Red)
+            ndvi = image.expression(
+                '((NIR - RED) / (NIR + RED))',
+                {
+                    'NIR': image.select('B8'),
+                    'RED': image.select('B4'),
+                },
+            ).rename('NDVI')
 
-        collection = collection.map(add_ndvi)
-        collection = collection.select(bands + ['NDVI'])
+            # EVI: 2.5 * (NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1)
+            evi = image.expression(
+                '2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))',
+                {
+                    'NIR': image.select('B8'),
+                    'RED': image.select('B4'),
+                    'BLUE': image.select('B2'),
+                },
+            ).rename('EVI')
+
+            # NDWI (McFeeters): (Green - NIR) / (Green + NIR)
+            ndwi = image.expression(
+                '((GREEN - NIR) / (GREEN + NIR))',
+                {
+                    'NIR': image.select('B8'),
+                    'GREEN': image.select('B3'),
+                },
+            ).rename('NDWI')
+
+            # CGI / GCI (Green Chlorophyll Index): (NIR / Green) - 1
+            cgi = image.expression(
+                '(NIR / GREEN) - 1',
+                {'NIR': image.select('B8'), 'GREEN': image.select('B3')},
+            ).rename('CGI')
+
+            return image.addBands([ndvi, evi, ndwi, cgi])
+
+        collection = collection.map(add_vegetation)
+        collection = collection.select(bands + ['NDVI', 'EVI', 'NDWI', 'CGI'])
 
         data = collection.getRegion(point, scale).getInfo()
         df = pd.DataFrame(data[1:], columns=data[0])
