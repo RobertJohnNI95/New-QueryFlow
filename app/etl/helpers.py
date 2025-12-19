@@ -55,9 +55,11 @@ def apply_filtering(data: pd.DataFrame, filters_expressions_tree: dict) -> pd.Da
         left_operand = data[left_operand]
 
     if operator == "like":
-        return data[
-            [True if re.match(right_operand, str(x)) else False for x in left_operand]
-        ]
+        pattern = re.escape(right_operand)
+        pattern = pattern.replace(r"\%", "%").replace(r"\_", "_")
+        pattern = pattern.replace("%", ".*").replace("_", ".")
+        pattern = f"^{pattern}$"
+        return data[left_operand.astype(str).str.match(pattern, na=False)]
 
     if operator == ">":
         return data[left_operand > right_operand]
