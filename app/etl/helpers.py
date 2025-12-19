@@ -510,3 +510,52 @@ def apply_order_by_without_groupby(data: pd.DataFrame, order_by_node: OrderByNod
 #         return 'XML'
 #     elif re.search( r'(.+\.xlsx)| (.+\.xls) | (.+\.xlsm)| (.+\.xlsb)| (.+\.odf)| (.+\.ods)| (.+\.odt)', data_source):
 #         return 'EXCEL'
+
+
+def apply_join(
+    left_df: pd.DataFrame,
+    right_df: pd.DataFrame,
+    condition: dict,
+    join_type: str,
+    left_alias: str | None,
+    right_alias: str | None,
+) -> pd.DataFrame:
+    if left_alias:
+        left_df = left_df.add_prefix(f"{left_alias}.")
+    if right_alias:
+        right_df = right_df.add_prefix(f"{right_alias}.")
+
+    left_on = []
+    right_on = []
+
+    def extract_keys(cond):
+        if cond["type"] == "and":
+            extract_keys(cond["left"])
+            extract_keys(cond["right"])
+        elif cond["type"] == "==":
+            l, r = cond["left"], cond["right"]
+            # Check columns
+            if str(l) in left_df.columns and str(r) in right_df.columns:
+                left_on.append(l)
+                right_on.append(r)
+            elif str(l) in right_df.columns and str(r) in left_df.columns:
+                left_on.append(r)
+                right_on.append(l)
+
+    extract_keys(condition)
+
+    if not left_on or not right_on:
+        # Fallback if no keys found (e.g. cross join logic or complex condition)
+        # For inner join, we typically need keys.
+        # If keys are empty, pandas merge requires 'cross' or similar.
+        # Here we attempt a merge if keys exist, otherwise we might need to handle differently.
+        # For now, assuming keys are present for INNER JOIN.
+        result = pd.merge(left_df, right_df, how="cross")
+    else:
+        result = pd.merge(
+            left_df, right_df, left_on=left_on, right_on=right_on, how=join_type
+        )
+
+    # Apply the full condition as a filter to handle non-equi joins or complex logic
+    result = apply_filtering(result, condition)
+    return result

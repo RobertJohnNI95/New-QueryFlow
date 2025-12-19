@@ -6,6 +6,7 @@ from app.compiler.ast_nodes import (
     OrderByParameter,
     SortingWay,
     AliasNode,
+    JoinNode,
 )
 from app.core.errors import ParserError
 
@@ -60,22 +61,51 @@ def p_select(p):
     if type(select_columns) == str:
         select_columns = "'" + select_columns + "'"
 
-    # from_stmt can be a DATASOURCE string or a tuple (DATASOURCE, alias)
-    if isinstance(from_stmt, tuple):
-        datasource = from_stmt[0]
-        datasource_alias = from_stmt[1]
-    else:
-        datasource = from_stmt
-        datasource_alias = None
+    extraction_code = ""
 
-    file_type, file_path = datasource.split(":", 1)
+    if isinstance(from_stmt, JoinNode):
+        left_node = from_stmt.left
+        right_node = from_stmt.right
+
+        def get_source_info(node):
+            if isinstance(node, tuple):
+                return node[0], node[1]
+            return node, None
+
+        l_ds, l_alias = get_source_info(left_node)
+        r_ds, r_alias = get_source_info(right_node)
+
+        l_type, l_path = l_ds.split(":", 1)
+        r_type, r_path = r_ds.split(":", 1)
+
+        l_alias_repr = f"'{l_alias}'" if l_alias else "None"
+        r_alias_repr = f"'{r_alias}'" if r_alias else "None"
+
+        extraction_code = (
+            f"left_data = etl.extract('{l_type}', '{l_path}')\n"
+            f"right_data = etl.extract('{r_type}', '{r_path}')\n"
+            f"extracted_data = etl.apply_join(left_data, right_data, {from_stmt.condition}, '{from_stmt.join_type}', {l_alias_repr}, {r_alias_repr})\n"
+        )
+    else:
+        if isinstance(from_stmt, tuple):
+            datasource, alias = from_stmt
+            file_type, file_path = datasource.split(":", 1)
+            extraction_code = (
+                f"extracted_data = etl.extract('{file_type}','{file_path}')\n"
+                f"extracted_data = extracted_data.add_prefix('{alias}.')\n"
+            )
+        else:
+            datasource = from_stmt
+            file_type, file_path = datasource.split(":", 1)
+            extraction_code = f"extracted_data = etl.extract('{file_type}','{file_path}')\n"
+
     if into_stmt:
         load_type, load_path = into_stmt.split(":", 1)
 
     p[0] = (
         "from app import etl\n"
         "from app.compiler.ast_nodes import *\n\n"
-        f"extracted_data = etl.extract('{file_type}','{file_path}')\n"
+        f"{extraction_code}"
         f"transformed_data = etl.transform_select(\n"
         f"   extracted_data,\n"
         f"   {{\n"
@@ -343,6 +373,11 @@ def p_datasource_alias_as(p):
 def p_datasource_alias_plainname(p):
     """datasource_alias : DATASOURCE SIMPLE_COLNAME"""
     p[0] = (p[1], str(p[2]))
+
+
+def p_from_statement_join(p):
+    """from_statement : FROM datasource_alias INNER JOIN datasource_alias ON conditions"""
+    p[0] = JoinNode(left=p[2], right=p[5], join_type="inner", condition=p[7])
 
 
 ###########################

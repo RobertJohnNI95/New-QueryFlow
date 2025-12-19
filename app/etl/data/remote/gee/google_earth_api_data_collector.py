@@ -56,8 +56,12 @@ class GoogleEarthAPIDataCollector:
     def __process_data(self, df):
         calculator_instance = DataProcessor()
         weather_df = pd.DataFrame()
+        if "longitude" in df.columns:
+            weather_df["longitude"] = df["longitude"]
+        if "latitude" in df.columns:
+            weather_df["latitude"] = df["latitude"]
         weather_df["date"] = df["time"].apply(
-            lambda x: pd.to_datetime(x / 1000, unit="s")
+            lambda x: pd.to_datetime(x / 1000, unit="s").date()
         )
         weather_df["temperature"] = df["temperature_2m"] - 273.15
         weather_df["soil_temperature"] = df["soil_temperature_level_1"] - 273.15
@@ -204,10 +208,11 @@ class GoogleEarthAPIDataCollector:
 
         # Add a datetime column for convenience
         if "time" in df.columns:
-            df["date"] = df["time"].apply(lambda x: pd.to_datetime(x / 1000, unit="s"))
+            df["date"] = df["time"].apply(lambda x: pd.to_datetime(x / 1000, unit="s").date())
 
         # Ensure NDVI column exists and is numeric (could be None for some entries)
         if 'NDVI' in df.columns:
             df['NDVI'] = pd.to_numeric(df['NDVI'], errors='coerce')
 
+        df = df.round(5)
         return df

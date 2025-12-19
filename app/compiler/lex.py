@@ -27,6 +27,9 @@ reserved = [
     "SET",
     "DELETE",
     "AS",
+    "INNER",
+    "JOIN",
+    "ON",
 ]
 tokens = [
     "FLOATNUMBER",
@@ -84,7 +87,7 @@ digit = r"([0-9])"
 nondigit = r"([_A-Za-z])"
 # the next pattern not enforce full match
 bracketed_identifier = r"\[([_A-Za-z][ _A-Za-z0-9]*)\]"
-simple_identifier = r"(" + nondigit + r"(" + digit + r"|" + nondigit + r")*)"
+simple_identifier = r"(" + nondigit + r"(" + digit + r"|" + nondigit + r"|\." + r")*)"
 
 agg_functions = [
     "sum",  # Sum of values
@@ -134,6 +137,21 @@ def t_INTO(t):
 
 @TOKEN(r"as")
 def t_AS(t):
+    return t
+
+
+@TOKEN(r"inner")
+def t_INNER(t):
+    return t
+
+
+@TOKEN(r"join")
+def t_JOIN(t):
+    return t
+
+
+@TOKEN(r"on")
+def t_ON(t):
     return t
 
 

@@ -16,6 +16,7 @@ from app.etl.helpers import (
     get_unique,
     group_by_columns_names,
     apply_order_by_without_groupby,
+    apply_join,
 )
 
 

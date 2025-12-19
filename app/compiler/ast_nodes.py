@@ -44,3 +44,11 @@ class OrderByNode:
 class AliasNode:
     expr: ColumnNameNode | ColumnIndexNode | AggregationNode | str | tuple
     alias: str
+
+
+@dataclass
+class JoinNode:
+    left: str | tuple
+    right: str | tuple
+    join_type: str
+    condition: dict
