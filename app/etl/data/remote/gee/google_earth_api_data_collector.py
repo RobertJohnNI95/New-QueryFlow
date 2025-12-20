@@ -46,12 +46,16 @@ class GoogleEarthAPIDataCollector:
             df = self.__load_sentinel2(dataset, start_date, end_date, longitude, latitude, scale)
             return df
 
-        # Default: assume atmospheric/weather dataset (e.g., ERA5)
-        df = self.__load_data_from_dataset(
-            dataset, start_date, end_date, longitude, latitude, scale
-        )
-        weather_df = self.__process_data(df)
-        return weather_df
+        # Specific handling for ERA5 Land Daily Aggregate
+        if dataset == "ECMWF/ERA5_LAND/DAILY_AGGR":
+            df = self.__load_data_from_dataset(
+                dataset, start_date, end_date, longitude, latitude, scale
+            )
+            weather_df = self.__process_data(df)
+            return weather_df
+
+        # Generic fallback for any other dataset
+        return self.__load_generic_dataset(dataset, start_date, end_date, longitude, latitude, scale)
 
     def __process_data(self, df):
         calculator_instance = DataProcessor()
@@ -107,6 +111,31 @@ class GoogleEarthAPIDataCollector:
         )
         weather_df = weather_df.round(5)
         return weather_df
+
+    def __load_generic_dataset(
+        self, dataset, start_date, end_date, longitude, latitude, scale
+    ):
+        """Load any Earth Engine dataset for a point, returning all bands."""
+        point = ee.Geometry.Point([longitude, latitude])
+        collection = ee.ImageCollection(dataset).filterDate(start_date, end_date)
+
+        # Check if collection is empty
+        if collection.limit(1).size().getInfo() == 0:
+            return pd.DataFrame()
+
+        # Homogenize bands: Select bands from the first image to ensure consistency
+        # This fixes errors with heterogeneous collections (e.g., NOAA/CFSR)
+        first_image_bands = ee.Image(collection.first()).bandNames()
+        collection = collection.select(first_image_bands)
+
+        data = collection.getRegion(point, scale).getInfo()
+        if not data or len(data) < 2:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(data[1:], columns=data[0])
+        if "time" in df.columns:
+            df["date"] = df["time"].apply(lambda x: pd.to_datetime(x / 1000, unit="s").date())
+        return df
 
     def __load_data_from_dataset(
         self, dataset, start_date, end_date, longitude, latitude, scale
