@@ -120,6 +120,10 @@ Keywords Dynamic, Python, code generation, ETL, In-memory data collections, comp
 
 ![Bar Plot Example](.assets/BAR1.png)
 
+### Map Visualization Example
+
+![Map Example](.assets/MAP1.png)
+
 ---
 
 ## Project Structure
