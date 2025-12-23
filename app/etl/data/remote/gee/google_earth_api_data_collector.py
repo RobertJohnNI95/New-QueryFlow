@@ -70,10 +70,6 @@ class GoogleEarthAPIDataCollector:
     def __process_data(self, df):
         calculator_instance = DataProcessor()
         weather_df = pd.DataFrame()
-        if "longitude" in df.columns:
-            weather_df["longitude"] = df["longitude"]
-        if "latitude" in df.columns:
-            weather_df["latitude"] = df["latitude"]
         weather_df["date"] = df["time"].apply(
             lambda x: pd.to_datetime(x / 1000, unit="s").date()
         )
@@ -119,6 +115,14 @@ class GoogleEarthAPIDataCollector:
             df["total_evaporation_sum"]
             - df["evaporation_from_vegetation_transpiration_sum"]
         )
+
+        if "longitude" in df.columns:
+            weather_df["longitude"] = df["longitude"]
+        if "latitude" in df.columns:
+            weather_df["latitude"] = df["latitude"]
+        if "time" in df.columns:
+            weather_df["time"] = df["time"]
+
         weather_df = weather_df.round(5)
         return weather_df
 
@@ -127,11 +131,18 @@ class GoogleEarthAPIDataCollector:
     ):
         """Load any Earth Engine dataset for a point, returning all bands."""
         point = ee.Geometry.Point([longitude, latitude])
-        collection = ee.ImageCollection(dataset).filterDate(start_date, end_date)
 
-        # Check if collection is empty
-        if collection.limit(1).size().getInfo() == 0:
-            return pd.DataFrame()
+        try:
+            collection = ee.ImageCollection(dataset).filterDate(start_date, end_date)
+            # Check if collection is empty. This triggers the API call which might fail if dataset is an Image.
+            if collection.limit(1).size().getInfo() == 0:
+                return pd.DataFrame()
+        except ee.EEException as e:
+            # Handle case where dataset is a single Image (e.g. OSU/GIMP/2000_IMAGERY_MOSAIC)
+            if "found 'Image'" in str(e):
+                collection = ee.ImageCollection([ee.Image(dataset)])
+            else:
+                raise e
 
         # Homogenize bands: Select bands from the first image to ensure consistency
         # This fixes errors with heterogeneous collections (e.g., NOAA/CFSR)
@@ -145,6 +156,12 @@ class GoogleEarthAPIDataCollector:
         df = pd.DataFrame(data[1:], columns=data[0])
         if "time" in df.columns:
             df["date"] = df["time"].apply(lambda x: pd.to_datetime(x / 1000, unit="s").date())
+
+        # Reorder columns to put location and time at the end
+        cols = [c for c in df.columns if c not in ["time", "longitude", "latitude"]]
+        cols = cols + [c for c in ["time", "longitude", "latitude"] if c in df.columns]
+        df = df[cols]
+
         return df
 
     def __load_data_from_dataset(
@@ -254,4 +271,10 @@ class GoogleEarthAPIDataCollector:
             df['NDVI'] = pd.to_numeric(df['NDVI'], errors='coerce')
 
         df = df.round(5)
+
+        # Reorder columns to put location and time at the end
+        cols = [c for c in df.columns if c not in ["longitude", "latitude", "time"]]
+        cols = cols + [c for c in ["longitude", "latitude", "time"] if c in df.columns]
+        df = df[cols]
+
         return df
