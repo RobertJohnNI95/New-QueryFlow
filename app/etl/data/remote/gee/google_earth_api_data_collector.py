@@ -39,6 +39,16 @@ class GoogleEarthAPIDataCollector:
         return mapping.get(key, "ECMWF/ERA5_LAND/DAILY_AGGR")
 
     def collect(self, satellite, start_date, end_date, longitude, latitude, scale):
+        """Collect data from Earth Engine for a specific point and time range.
+
+        Args:
+            satellite (str): The satellite identifier or alias (e.g., 'ERA5', 'S2').
+            start_date (str): Start date in 'YYYY-MM-DD' format.
+            end_date (str): End date in 'YYYY-MM-DD' format.
+            longitude (float): Longitude of the point.
+            latitude (float): Latitude of the point.
+            scale (float): The scale in meters for the reduction (resolution).
+        """
         dataset = self._resolve_dataset(satellite)
         # Branch behavior depending on dataset type
         if "COPERNICUS/S2" in dataset or "SENTINEL-2" in satellite.upper():
