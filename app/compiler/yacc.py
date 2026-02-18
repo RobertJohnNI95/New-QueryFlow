@@ -300,6 +300,48 @@ def p_select_unit_agg_alias(p):
     p[0] = (p[1], p[3], str(p[6]))
 
 
+def p_arith_paren(p):
+    """arith : LPAREN arith RPAREN"""
+    p[0] = f"({p[2]})"
+
+
+def p_arith_number_or_column(p):
+    """arith : column
+    | NUMBER"""
+    p[0] = str(p[1])
+
+
+def p_arith_binop(p):
+    """arith : arith PLUS arith
+    | arith MINUS arith
+    | arith TIMES arith
+    | arith DIVIDE arith
+    | arith PERCENT arith
+    | arith POWER arith"""
+    # convert parser op token to a Python expression operator where needed
+    op = p[2]
+    if op == '^':
+        op = '**'
+    p[0] = f"{p[1]} {op} {p[3]}"
+
+
+def p_arith_func(p):
+    """arith : SIMPLE_COLNAME LPAREN arith RPAREN"""
+    # function call like sin(x) or sqrt(x)
+    p[0] = f"{p[1]}({p[3]})"
+
+
+def p_select_unit_expr(p):
+    """select_unit : arith"""
+    # mark expression selects with a tuple so transform can detect
+    p[0] = ("expr", p[1])
+
+
+def p_select_unit_expr_alias(p):
+    """select_unit : arith AS SIMPLE_COLNAME"""
+    p[0] = AliasNode(expr=("expr", p[1]), alias=str(p[3]))
+
+
 def p_aggregation_function(p):
     """aggregation_function : AGGREGATION_FUNCTION LPAREN column RPAREN
     | AGGREGATION_FUNCTION LPAREN TIMES RPAREN"""

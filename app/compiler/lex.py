@@ -35,6 +35,7 @@ tokens = [
     "FLOATNUMBER",
     "NEGATIVE_INTNUMBER",
     "POSITIVE_INTNUMBER",
+    "POWER",
     "PLUS",
     "MINUS",
     "TIMES",
@@ -65,6 +66,7 @@ t_MINUS = r"-"
 t_TIMES = r"\*"
 t_DIVIDE = r"/"
 t_PERCENT = r"%"
+t_POWER = r"\^"
 t_LPAREN = r"\("
 t_RPAREN = r"\)"
 t_EQUAL = r"=="

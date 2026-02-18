@@ -1,4 +1,7 @@
 from typing import Any, Callable, Tuple
+import re
+import math
+import numpy as np
 import pandas as pd
 from app.compiler.ast_nodes import *
 from app.etl.data.data_factories import (
@@ -34,8 +37,10 @@ def extract(data_source_type: str, data_source_path: str) -> pd.DataFrame:
 def transform_select(data: pd.DataFrame, criteria: dict) -> pd.DataFrame:
     are_select_columns_aggregation = False
     if criteria["COLUMNS"] != "__all__":
+        # consider aggregation-only when all select items are tuples and not expression tuples
         are_select_columns_aggregation = all(
-            type(item) == tuple for item in criteria["COLUMNS"]
+            isinstance(item, tuple) and not (len(item) >= 1 and item[0] == "expr")
+            for item in criteria["COLUMNS"]
         )
     alias_map: dict[str, str] = {}
     # filtering
@@ -97,22 +102,144 @@ def transform_select(data: pd.DataFrame, criteria: dict) -> pd.DataFrame:
                     data = data.rename(columns=alias_map)
 
             else:
-                if any(type(column) == tuple for column in columns):
+                # if there are aggregation tuples mixed with non-aggregation (except expr tuples), error
+                if any(isinstance(column, tuple) and (not (len(column) >= 1 and column[0] == "expr")) for column in columns):
                     raise Exception(
                         "there are aggregation columns in select you should use group by"
                     )
                 # assuming that select columns don't contain any aggregate
                 column_names = []
-                for column in columns:
+                for i, column in enumerate(columns):
                     # alias node
                     if isinstance(column, AliasNode):
                         inner = column.expr
-                        if is_column_number(inner):
-                            col_name = data.columns[int(inner[1:-1])]
+                        # expression with alias
+                        if isinstance(inner, tuple) and inner[0] == "expr":
+                            expr = inner[1]
+                            try:
+                                # prepare local vars and replace index-style [n] with temporary vars
+                                def _prepare_locals(expr_str):
+                                    local_vars = {}
+                                    def _replace_index(m):
+                                        idx = int(m.group(1))
+                                        colname = data.columns[idx]
+                                        varname = f"__colidx_{idx}"
+                                        local_vars[varname] = data[colname]
+                                        return varname
+                                    expr_to_eval = re.sub(r"\[(\d+)\]", _replace_index, expr_str)
+                                    for col in data.columns:
+                                        if col not in local_vars:
+                                            try:
+                                                local_vars[col] = data[col]
+                                            except Exception:
+                                                pass
+                                    return expr_to_eval, local_vars
+
+                                expr_to_eval, local_vars = _prepare_locals(expr)
+
+                                # math functions we want to expose (prefer numpy ufuncs)
+                                math_funcs = [
+                                    'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
+                                    'sqrt', 'log', 'log10', 'exp', 'pow', 'fabs', 'floor', 'ceil'
+                                ]
+
+                                # build globals for python eval (prefer numpy functions)
+                                math_globals = {"pd": pd, "np": np}
+                                for fn in math_funcs:
+                                    try:
+                                        if hasattr(np, fn):
+                                            math_globals[fn] = getattr(np, fn)
+                                        else:
+                                            math_globals[fn] = getattr(math, fn)
+                                    except Exception:
+                                        pass
+
+                                # if expression uses math functions or power operator, use python eval
+                                uses_func = re.search(r"\b(" + "|".join(math_funcs) + r")\s*\(", expr_to_eval) is not None
+                                if uses_func or "**" in expr_to_eval:
+                                    result = eval(expr_to_eval, math_globals, local_vars)
+                                else:
+                                    try:
+                                        result = data.eval(expr_to_eval, engine="python", local_dict=local_vars)
+                                    except Exception:
+                                        result = eval(expr_to_eval, math_globals, local_vars)
+
+                                if isinstance(result, pd.DataFrame):
+                                    series = result.iloc[:, 0]
+                                elif isinstance(result, np.ndarray):
+                                    series = pd.Series(result, index=data.index)
+                                else:
+                                    series = result
+                            except Exception:
+                                raise
+                            data[column.alias] = series.values
+                            column_names.append(column.alias)
+                            alias_map[column.alias] = column.alias
                         else:
-                            col_name = inner
-                        column_names.append(col_name)
-                        alias_map[col_name] = column.alias
+                            if is_column_number(inner):
+                                col_name = data.columns[int(inner[1:-1])]
+                            else:
+                                col_name = inner
+                            column_names.append(col_name)
+                            alias_map[col_name] = column.alias
+                    # plain expression tuple without alias
+                    elif isinstance(column, tuple) and len(column) >= 1 and column[0] == "expr":
+                        expr = column[1]
+                        try:
+                            # prepare locals and replace [n]
+                            def _prepare_locals(expr_str):
+                                local_vars = {}
+                                def _replace_index(m):
+                                    idx = int(m.group(1))
+                                    colname = data.columns[idx]
+                                    varname = f"__colidx_{idx}"
+                                    local_vars[varname] = data[colname]
+                                    return varname
+                                expr_to_eval = re.sub(r"\[(\d+)\]", _replace_index, expr_str)
+                                for col in data.columns:
+                                    if col not in local_vars:
+                                        try:
+                                            local_vars[col] = data[col]
+                                        except Exception:
+                                            pass
+                                return expr_to_eval, local_vars
+
+                            expr_to_eval, local_vars = _prepare_locals(expr)
+
+                            math_funcs = [
+                                'sin', 'cos', 'tan', 'asin', 'acos', 'atan',
+                                'sqrt', 'log', 'log10', 'exp', 'pow', 'fabs', 'floor', 'ceil'
+                            ]
+                            math_globals = {"pd": pd, "np": np}
+                            for fn in math_funcs:
+                                try:
+                                    if hasattr(np, fn):
+                                        math_globals[fn] = getattr(np, fn)
+                                    else:
+                                        math_globals[fn] = getattr(math, fn)
+                                except Exception:
+                                    pass
+
+                            uses_func = re.search(r"\b(" + "|".join(math_funcs) + r")\s*\(", expr_to_eval) is not None
+                            if uses_func or "**" in expr_to_eval:
+                                result = eval(expr_to_eval, math_globals, local_vars)
+                            else:
+                                try:
+                                    result = data.eval(expr_to_eval, engine="python", local_dict=local_vars)
+                                except Exception:
+                                    result = eval(expr_to_eval, math_globals, local_vars)
+
+                            if isinstance(result, pd.DataFrame):
+                                series = result.iloc[:, 0]
+                            elif isinstance(result, np.ndarray):
+                                series = pd.Series(result, index=data.index)
+                            else:
+                                series = result
+                        except Exception:
+                            raise
+                        gen_name = f"__expr_{i}"
+                        data[gen_name] = series.values
+                        column_names.append(gen_name)
                     else:
                         col_name = (
                             data.columns[int(column[1:-1])]
